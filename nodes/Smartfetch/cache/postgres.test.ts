@@ -23,7 +23,7 @@ vi.mock('pg', () => {
 				this.connect = vi.fn().mockResolvedValue(undefined);
 				this.query = vi.fn().mockResolvedValue({ rows: [] });
 				this.end = vi.fn().mockResolvedValue(undefined);
-				// Store reference for test assertions
+				// eslint-disable-next-line @typescript-eslint/no-this-alias
 				mockClientInstance = this;
 			}
 		},

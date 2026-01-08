@@ -30,6 +30,7 @@ vi.mock('pg', () => {
 					return Promise.resolve({ rows: [] });
 				});
 				this.end = vi.fn().mockResolvedValue(undefined);
+				// eslint-disable-next-line @typescript-eslint/no-this-alias
 				mockClientInstance = this;
 			}
 		},
@@ -338,6 +339,7 @@ describe('Smartfetch Node', () => {
 				},
 				{
 					httpQueryAuth: {
+						// eslint-disable-next-line n8n-nodes-base/node-param-display-name-miscased
 						name: 'api_key',
 						value: 'secret123',
 					},
