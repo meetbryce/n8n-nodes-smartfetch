@@ -385,6 +385,34 @@ describe('Smartfetch Node', () => {
 				}),
 			);
 		});
+
+		it('should use Header Auth via httpRequestWithAuthentication', async () => {
+			mockExecuteFunctions = createMockExecuteFunctions(
+				{
+					url: 'https://httpbin.org/get',
+					authentication: 'httpHeaderAuth',
+					cacheStorage: 'memory',
+					cacheDuration: 300,
+				},
+				{
+					httpHeaderAuth: {
+						name: 'X-Custom-Auth',
+						value: 'secret-header-value',
+					},
+				},
+			);
+
+			await smartfetch.execute.call(mockExecuteFunctions);
+
+			// Header Auth uses the generic httpRequestWithAuthentication helper
+			expect(mockExecuteFunctions.helpers.httpRequestWithAuthentication).toHaveBeenCalledWith(
+				'httpHeaderAuth',
+				expect.objectContaining({
+					method: 'GET',
+					url: 'https://httpbin.org/get',
+				}),
+			);
+		});
 	});
 
 	describe('execute - validation', () => {
