@@ -33,11 +33,14 @@ This is an n8n community node using the **programmatic node pattern** (custom `e
 ```
 nodes/Smartfetch/
   Smartfetch.node.ts              # Main node with execute() method
+  Smartfetch.node.json            # Node metadata and documentation links
+  Smartfetch.node.test.ts         # Integration tests
   cache/
-    types.ts                      # CacheEntry interface, helpers
-    memory.ts                     # In-memory cache adapter
-    datatable.ts                  # n8n DataTable cache adapter
+    types.ts                      # CacheEntry, CacheAdapter interfaces, helpers
+    memory.ts                     # In-memory cache adapter (1000 entry limit)
+    postgres.ts                   # PostgreSQL cache adapter
     index.ts                      # Exports
+    *.test.ts                     # Unit tests for adapters
 ```
 
 ### Key Patterns
@@ -49,11 +52,9 @@ nodes/Smartfetch/
 interface CacheAdapter {
   get(key: string): Promise<CacheEntry | null>;
   set(entry: CacheEntry): Promise<void>;
+  delete(key: string): Promise<void>;
+  close?(): Promise<void>;
 }
 ```
 
-**n8n DataTable API**: Access via `this.helpers.getDataTableProxy(tableId)` for persistent caching.
-
-**Built-in auth**: Uses n8n's credential system via `httpRequestWithAuthentication()` - supports Basic, Header, Query, OAuth1, OAuth2.
-
-**Resource locator**: Cache table selection uses `resourceLocator` type with `loadOptions.getDataTables()` method.
+**Built-in auth**: Uses n8n's credential system - supports Basic, Bearer, Digest, Header, and Query authentication.
