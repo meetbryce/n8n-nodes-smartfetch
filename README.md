@@ -1,46 +1,65 @@
 # n8n-nodes-smartfetch
 
-This is an n8n community node. It lets you use _app/service name_ in your n8n workflows.
-
-_App/service name_ is _one or two sentences describing the service this node integrates with_.
+An n8n community node that provides HTTP GET requests with built-in caching. Think of it as a superset of the native HTTP Request node, but with simple cache controls that don't overwhelm non-technical users.
 
 [n8n](https://n8n.io/) is a [fair-code licensed](https://docs.n8n.io/sustainable-use-license/) workflow automation platform.
-
-[Installation](#installation)
-[Operations](#operations)
-[Credentials](#credentials)
-[Compatibility](#compatibility)
-[Usage](#usage)
-[Resources](#resources)
-[Version history](#version-history)
 
 ## Installation
 
 Follow the [installation guide](https://docs.n8n.io/integrations/community-nodes/installation/) in the n8n community nodes documentation.
 
-## Operations
+## Features
 
-_List the operations supported by your node._
+- **HTTP GET with caching** - Automatically cache responses to reduce API calls
+- **Flexible cache storage** - Memory (fast, ephemeral) or PostgreSQL (persistent)
+- **Simple TTL controls** - Preset durations (5min, 1hr, 1day, 1week, 1month) or custom
+- **Multiple auth methods** - Basic, Bearer, Digest, Header, and Query authentication
+- **Secure cache keys** - Credentials are hashed (SHA-256) so different auth = different cache
 
-## Credentials
+## Cache Storage Options
 
-_If users need to authenticate with the app/service, provide details here. You should include prerequisites (such as signing up with the service), available authentication methods, and how to set them up._
+### Memory
+- Fast, in-process caching
+- Cleared when n8n restarts
+- Good for development or short-lived caches
+
+### PostgreSQL
+- Persistent caching across restarts
+- Auto-creates cache table with schema:
+  - `key` (VARCHAR) - hashed cache key
+  - `request_url` (TEXT) - original URL for debugging
+  - `response` (JSONB) - cached response data
+  - `cached_at` (TIMESTAMPTZ) - when cached
+  - `ttl` (INT) - time-to-live in seconds
+- Configurable table name (multiple caches per database)
+- SSL enabled by default
+
+## Authentication
+
+| Method | Description |
+|--------|-------------|
+| None | No authentication |
+| Basic Auth | Username/password via Authorization header |
+| Bearer Auth | Token via Authorization: Bearer header |
+| Digest Auth | Challenge-response authentication |
+| Header Auth | Custom header name/value |
+| Query Auth | API key as query parameter |
 
 ## Compatibility
 
-_State the minimum n8n version, as well as which versions you test against. You can also include any known version incompatibility issues._
+Tested with n8n version 2.2.4.
 
 ## Usage
 
-_This is an optional section. Use it to help users with any difficult or confusing aspects of the node._
+1. Add the Smartfetch node to your workflow
+2. Enter the URL to fetch
+3. Select authentication method (if needed)
+4. Choose cache storage (Memory or PostgreSQL)
+5. Set cache duration
+6. Execute!
 
-_By the time users are looking for community nodes, they probably already know n8n basics. But if you expect new users, you can link to the [Try it out](https://docs.n8n.io/try-it-out/) documentation to help them get started._
+Subsequent executions with the same URL and credentials will return cached responses until TTL expires.
 
 ## Resources
 
-* [n8n community nodes documentation](https://docs.n8n.io/integrations/#community-nodes)
-* _Link to app/service documentation._
-
-## Version history
-
-_This is another optional section. If your node has multiple versions, include a short description of available versions and what changed, as well as any compatibility impact._
+- [n8n community nodes documentation](https://docs.n8n.io/integrations/#community-nodes)
