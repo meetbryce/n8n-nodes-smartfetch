@@ -6,6 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Smartfetch is an n8n community node that acts as a superset of the native HTTP Request node, adding a simple caching layer with intuitive controls. The goal is to make caching accessible to non-technical users without being overwhelming.
 
+## Development Principles
+- Never edit application code and test code at the same time. The user should make clear to you which you are working on and you should only work on the one they specified. If asked to write a test, do not modify the application code without approval.
+
 ## Commands
 
 ```bash
