@@ -5,7 +5,7 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import { createHash } from 'crypto';
 import {
 	type CacheAdapter,
@@ -31,16 +31,12 @@ export class Smartfetch implements INodeType {
 		usableAsTool: true,
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
+		/* eslint-disable n8n-nodes-base/node-class-description-credentials-name-unsuffixed, @n8n/community-nodes/no-credential-reuse */
 		credentials: [
 			{
 				name: 'httpBasicAuth',
 				required: true,
 				displayOptions: { show: { authentication: ['httpBasicAuth'] } },
-			},
-			{
-				name: 'httpHeaderAuth',
-				required: true,
-				displayOptions: { show: { authentication: ['httpHeaderAuth'] } },
 			},
 			{
 				name: 'httpBearerAuth',
@@ -53,6 +49,11 @@ export class Smartfetch implements INodeType {
 				displayOptions: { show: { authentication: ['httpDigestAuth'] } },
 			},
 			{
+				name: 'httpHeaderAuth',
+				required: true,
+				displayOptions: { show: { authentication: ['httpHeaderAuth'] } },
+			},
+			{
 				name: 'httpQueryAuth',
 				required: true,
 				displayOptions: { show: { authentication: ['httpQueryAuth'] } },
@@ -63,6 +64,7 @@ export class Smartfetch implements INodeType {
 				displayOptions: { show: { cacheStorage: ['postgres'] } },
 			},
 		],
+		/* eslint-enable n8n-nodes-base/node-class-description-credentials-name-unsuffixed, @n8n/community-nodes/no-credential-reuse */
 		properties: [
 			{
 				displayName: 'URL',
@@ -78,11 +80,11 @@ export class Smartfetch implements INodeType {
 				name: 'authentication',
 				type: 'options',
 				options: [
-					{ name: 'None', value: 'none' },
 					{ name: 'Basic Auth', value: 'httpBasicAuth' },
 					{ name: 'Bearer Auth', value: 'httpBearerAuth' },
 					{ name: 'Digest Auth', value: 'httpDigestAuth' },
 					{ name: 'Header Auth', value: 'httpHeaderAuth' },
+					{ name: 'None', value: 'none' },
 					{ name: 'Query Auth', value: 'httpQueryAuth' },
 				],
 				default: 'none',
@@ -137,7 +139,7 @@ export class Smartfetch implements INodeType {
 				description: 'How long to cache responses',
 			},
 			{
-				displayName: 'Custom TTL (seconds)',
+				displayName: 'Custom TTL (Seconds)',
 				name: 'customTtl',
 				type: 'number',
 				default: 3600,
@@ -155,115 +157,162 @@ export class Smartfetch implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		for (let i = 0; i < items.length; i++) {
-			const url = this.getNodeParameter('url', i) as string;
-			const authentication = this.getNodeParameter('authentication', i) as string;
-			const cacheStorage = this.getNodeParameter('cacheStorage', i) as string;
-			const cacheDuration = this.getNodeParameter('cacheDuration', i) as number | string;
-			const ttl = cacheDuration === 'custom'
-				? (this.getNodeParameter('customTtl', i) as number)
-				: (cacheDuration as number);
+		// Create cache adapter ONCE for all items
+		let cacheAdapter: CacheAdapter;
+		let postgresAdapter: PostgresCacheAdapter | null = null;
 
-			// Get cache adapter
-			let cacheAdapter: CacheAdapter;
-			let postgresAdapter: PostgresCacheAdapter | null = null;
+		const cacheStorage = this.getNodeParameter('cacheStorage', 0) as string;
+		if (cacheStorage === 'postgres') {
+			const credentials = (await this.getCredentials('postgres')) as PostgresCredentials;
+			const tableName = this.getNodeParameter('cacheTableName', 0) as string;
 
-			if (cacheStorage === 'postgres') {
-				const credentials = (await this.getCredentials('postgres')) as PostgresCredentials;
-				const tableName = this.getNodeParameter('cacheTableName', i) as string;
-				postgresAdapter = new PostgresCacheAdapter(credentials, tableName);
-				cacheAdapter = postgresAdapter;
-			} else {
-				cacheAdapter = new MemoryCacheAdapter();
+			// Validate table name: must start with letter/underscore, contain only alphanumeric/underscore, max 63 chars
+			if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+				throw new NodeOperationError(this.getNode(), 'Cache table name must start with a letter or underscore and contain only alphanumeric characters and underscores');
+			}
+			if (tableName.length > 63) {
+				throw new NodeOperationError(this.getNode(), 'Cache table name must be 63 characters or less (PostgreSQL identifier limit)');
 			}
 
-			// Generate cache key (include hashed credentials for security)
-			let credentialHash: string | undefined;
-			if (authentication !== 'none') {
-				const credentials = await this.getCredentials(authentication);
-				const credentialString = JSON.stringify(credentials);
-				credentialHash = createHash('sha256').update(credentialString).digest('hex').substring(0, 16);
+			postgresAdapter = new PostgresCacheAdapter(credentials, tableName);
+			cacheAdapter = postgresAdapter;
+		} else {
+			cacheAdapter = new MemoryCacheAdapter();
+		}
+
+		try {
+			for (let i = 0; i < items.length; i++) {
+				const url = this.getNodeParameter('url', i) as string;
+				const authentication = this.getNodeParameter('authentication', i) as string;
+				const cacheDuration = this.getNodeParameter('cacheDuration', i) as number | string;
+				let ttl: number;
+				if (cacheDuration === 'custom') {
+					ttl = this.getNodeParameter('customTtl', i) as number;
+					// Validate custom TTL: must be positive integer, max 1 year
+					if (!Number.isFinite(ttl) || ttl <= 0 || ttl > 31536000) {
+						throw new NodeOperationError(this.getNode(), 'Custom TTL must be a positive number between 1 and 31536000 seconds (1 year)', { itemIndex: i });
+					}
+				} else {
+					ttl = cacheDuration as number;
+				}
+
+				// Generate cache key (include full SHA-256 hashed credentials for security)
+				let credentialHash: string | undefined;
+				if (authentication !== 'none') {
+					const credentials = await this.getCredentials(authentication);
+					const credentialString = JSON.stringify(credentials);
+					credentialHash = createHash('sha256').update(credentialString).digest('hex');
+				}
+				const cacheKey = generateCacheKey(url, credentialHash);
+
+				// Check cache
+				const cachedEntry = await cacheAdapter.get(cacheKey);
+				if (cachedEntry && isCacheValid(cachedEntry)) {
+					try {
+						returnData.push({
+							json: JSON.parse(cachedEntry.response) as IDataObject,
+							pairedItem: { item: i },
+						});
+						continue;
+					} catch {
+						// Cache entry corrupted - delete it and fall through to fetch fresh data
+						try {
+							await cacheAdapter.delete(cacheKey);
+						} catch {
+							// Ignore delete errors - we'll overwrite with fresh data anyway
+						}
+						// Intentional fall-through: proceed to HTTP request below
+					}
+				}
+
+				// Make request with per-item error handling
+				try {
+					let response: IDataObject;
+					const requestOptions: {
+						method: 'GET';
+						url: string;
+						json: boolean;
+						headers?: IDataObject;
+					} = {
+						method: 'GET',
+						url,
+						json: true,
+					};
+
+					if (authentication === 'none') {
+						response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
+					} else if (authentication === 'httpBasicAuth') {
+						const credentials = await this.getCredentials('httpBasicAuth');
+						const basicAuth = Buffer.from(`${credentials.user}:${credentials.password}`).toString('base64');
+						requestOptions.headers = {
+							Authorization: `Basic ${basicAuth}`,
+						};
+						response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
+					} else if (authentication === 'httpBearerAuth') {
+						const credentials = await this.getCredentials('httpBearerAuth');
+						requestOptions.headers = {
+							Authorization: `Bearer ${credentials.token}`,
+						};
+						response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
+					} else if (authentication === 'httpDigestAuth') {
+						const credentials = await this.getCredentials('httpDigestAuth');
+						response = (await this.helpers.httpRequest({
+							...requestOptions,
+							auth: {
+								username: credentials.user as string,
+								password: credentials.password as string,
+								sendImmediately: false,
+							},
+						})) as IDataObject;
+					} else if (authentication === 'httpQueryAuth') {
+						const credentials = await this.getCredentials('httpQueryAuth');
+						const separator = requestOptions.url.includes('?') ? '&' : '?';
+						const encodedName = encodeURIComponent(credentials.name as string);
+						const encodedValue = encodeURIComponent(credentials.value as string);
+						requestOptions.url = `${requestOptions.url}${separator}${encodedName}=${encodedValue}`;
+						response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
+					} else {
+						response = (await this.helpers.httpRequestWithAuthentication.call(
+							this,
+							authentication,
+							requestOptions,
+						)) as IDataObject;
+					}
+
+					// Store in cache
+					await cacheAdapter.set({
+						key: cacheKey,
+						requestUrl: url,
+						response: JSON.stringify(response),
+						cachedAt: Date.now(),
+						ttl,
+					});
+
+					returnData.push({
+						json: response,
+						pairedItem: { item: i },
+					});
+				} catch (error) {
+					// Per-item error handling: return error info instead of failing entire node
+					returnData.push({
+						json: {
+							error: true,
+							message: error instanceof Error ? error.message : String(error),
+							url,
+						},
+						pairedItem: { item: i },
+					});
+				}
 			}
-			const cacheKey = generateCacheKey(url, credentialHash);
-
-			// Check cache
-			const cachedEntry = await cacheAdapter.get(cacheKey);
-			if (cachedEntry && isCacheValid(cachedEntry)) {
-				returnData.push({
-					json: JSON.parse(cachedEntry.response) as IDataObject,
-					pairedItem: { item: i },
-				});
-				continue;
-			}
-
-			// Make request
-			let response: IDataObject;
-			const requestOptions: {
-				method: 'GET';
-				url: string;
-				json: boolean;
-				headers?: IDataObject;
-			} = {
-				method: 'GET',
-				url,
-				json: true,
-			};
-
-			if (authentication === 'none') {
-				response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
-			} else if (authentication === 'httpBasicAuth') {
-				const credentials = await this.getCredentials('httpBasicAuth');
-				const basicAuth = Buffer.from(`${credentials.user}:${credentials.password}`).toString('base64');
-				requestOptions.headers = {
-					Authorization: `Basic ${basicAuth}`,
-				};
-				response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
-			} else if (authentication === 'httpBearerAuth') {
-				const credentials = await this.getCredentials('httpBearerAuth');
-				requestOptions.headers = {
-					Authorization: `Bearer ${credentials.token}`,
-				};
-				response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
-			} else if (authentication === 'httpDigestAuth') {
-				const credentials = await this.getCredentials('httpDigestAuth');
-				response = (await this.helpers.httpRequest({
-					...requestOptions,
-					auth: {
-						username: credentials.user as string,
-						password: credentials.password as string,
-						sendImmediately: false,
-					},
-				})) as IDataObject;
-			} else if (authentication === 'httpQueryAuth') {
-				const credentials = await this.getCredentials('httpQueryAuth');
-				const separator = requestOptions.url.includes('?') ? '&' : '?';
-				requestOptions.url = `${requestOptions.url}${separator}${credentials.name}=${credentials.value}`;
-				response = (await this.helpers.httpRequest(requestOptions)) as IDataObject;
-			} else {
-				response = (await this.helpers.httpRequestWithAuthentication.call(
-					this,
-					authentication,
-					requestOptions,
-				)) as IDataObject;
-			}
-
-			// Store in cache
-			await cacheAdapter.set({
-				key: cacheKey,
-				requestUrl: url,
-				response: JSON.stringify(response),
-				cachedAt: Date.now(),
-				ttl,
-			});
-
-			returnData.push({
-				json: response,
-				pairedItem: { item: i },
-			});
-
-			// Close postgres connection if used
+		} finally {
+			// Always close PostgreSQL connection
+			// Wrap in try-catch to avoid suppressing the original error
 			if (postgresAdapter) {
-				await postgresAdapter.close();
+				try {
+					await postgresAdapter.close();
+				} catch {
+					// Ignore close errors - don't mask the original error
+				}
 			}
 		}
 

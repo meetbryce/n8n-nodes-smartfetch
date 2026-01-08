@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 export interface CacheEntry {
 	key: string;
 	requestUrl: string;
@@ -9,22 +11,24 @@ export interface CacheEntry {
 export interface CacheAdapter {
 	get(key: string): Promise<CacheEntry | null>;
 	set(entry: CacheEntry): Promise<void>;
+	delete(key: string): Promise<void>;
+	close?(): Promise<void>;
 }
 
 export function isCacheValid(entry: CacheEntry): boolean {
 	const now = Date.now();
-	const expiresAt = entry.cachedAt + entry.ttl * 1000;
+	// Cap TTL to prevent overflow with extreme values (max ~24 days in ms fits safely)
+	const safeTtlMs = Math.min(entry.ttl * 1000, 2147483647);
+	const expiresAt = entry.cachedAt + safeTtlMs;
 	return now < expiresAt;
 }
 
-export function generateCacheKey(url: string, credentialType?: string): string {
-	const base = credentialType ? `${credentialType}:${url}` : url;
-	// Simple hash for cache key
-	let hash = 0;
-	for (let i = 0; i < base.length; i++) {
-		const char = base.charCodeAt(i);
-		hash = (hash << 5) - hash + char;
-		hash = hash & hash;
-	}
-	return Math.abs(hash).toString(36);
+/**
+ * Generate a cryptographically secure cache key using SHA-256.
+ * The key incorporates the URL and optional credential hash to ensure
+ * different credentials result in different cache entries.
+ */
+export function generateCacheKey(url: string, credentialHash?: string): string {
+	const base = credentialHash ? `${credentialHash}:${url}` : url;
+	return createHash('sha256').update(base).digest('hex');
 }
