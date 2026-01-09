@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-smartfetch",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "n8n community node that provides HTTP GET requests with built-in caching",
   "license": "MIT",
   "homepage": "https://github.com/meetbryce/n8n-nodes-smartfetch",
